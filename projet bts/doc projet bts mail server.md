@@ -63,3 +63,71 @@ Pour la partie **filtrage** du courrier on utilisera **Rspamd**. C'est un **mote
 Rspamd permet d'intégré des **modules** au sein de l'outil. Ces modules sont des **services indépendant** qui peuvent lui être **rattachés**. Lorsque **Postfix** reçoit un courrier, il le **transmet à Rspamd** qui s'occupe de la couche de sécurité. Cette **sécurité** est alors encore divisé en **sous-couches** qui sont ces modules. **Chacun d'eux le traitent** en donnant un **score**, Rspamd fait ensuite un **verdict** de ce score ce qui lui permet de **faire une action** de rejet, désigner comme spam ou ne rien faire avan,t de le renvoyer à Potfix.
 
 Nous privilégerons ceratins modules du fait de leur activité. **DKIM**, **DMARC**, **CLAMAV**, **BAYES** et **MIME_TYPES** sont des modules qui permettent de vérifier **l'authenticité des domaines** d'où proviennnt les courriers (DKIM et DMARC), CLAMAV est un **antivirus** qui scan les courrier afin d'en désceller un potentiel virus, BAYES est un système **d'apprentissage automatique** de détection de spam et MIME_TYPES permet de vérifier **l'authenticité des pièces jointes**.
+
+
+## Mise en place
+
+### Entrées DNS 
+Il est préférable de **définir en amont** de l'installation, une entrée de type MX. Pour ce faire, nous utiliserons le service **Unbound DNS** intégré à notre pare-feu **OPNsense**. Il suffit alors de se rendre dans le menu **Services**, puis **Unbound DNS** et choisir **Overrides**. Une fois sur cette page, il faut **ajouter une entrée** et la définir comme **MX Records**, choisir le nom du serveur, sa correspondance en nom MX, le domain auquel il appartient et sa priorité (*La définir est obligatoire même si nous ne disposons que d'un serveur de messagerie*). 
+
+<img src="../projet bts/captures mail/conf mx records.png" width="80%">
+
+Enfin, Il faut alors créer une **entrée DNS de type A (IPv4)** afin de donnée une **correspondance au FDQN en adresse IP**.
+Le procédé est le même, en choisissant type A.
+
+<img src="../projet bts/captures mail/conf mail server dns a.png" width="80%">
+
+### Postfix
+
+#### Installation
+Postfix est disponible depuis une installation à travers le dépôt d'installation Debian. Pour ce faire il faut alors taper ces commmandes :
+
+```sudo apt update && sudo apt upgrade -y``` 
+
+*Ces commandes permettant alors de pouvoir vérifier si une mise à jour des paquets du repertoire de dépôt est disponible et si nécessaire de les appliquer*
+
+Enfin il est alors possible de l'installer à l'aide de 
+
+```sudo apt install postfix -y```
+
+<img src="../projet bts/captures mail/postfix install.png" width="75%">
+
+Une Page d'installation Debian va alors appraitre nous permettant de sélectionner le type de serveur de messagerie nous voulons installer. Ils nous est disposé de 5 options, nous prendrons la 2e correspondant à **Internet Site**. Cette option défini alors que les courriers sont envoyés et reçus en utilisant le protocole **SMTP**. Ensuite, ils nous faut alors définri le **FQDN** (*doit être identique à celui déclaré dans les entrées DNS*) du serveur mail, dans notre cas nous utiliserons **mail.cdg.sio.pub**. Une fois choisi le serveur s'installera.
+
+
+#### Configuration
+Une fois installé, la configuration du service Postfix se fait dans le fichier *main.cf* à l'emplacement */etc/postfix/main.cf*. Dans ce fichier sont présents les chemins indiquant les certificats ou les clés d'authentification du serveur. Il permet aussi de définir le FQDN du serveur, les réseaux sur lesquels sont présent des relais (*si plusieurs serveurs de messagerie sont déclarés pour le même domaine*). Dans notre configuration, nous définirons dans un premier temps le domaine sur lequel il execercera, les destinations qu'il considère comme lui-même et nous vérifirons son hostname. Pour accéder au fichier : 
+
+```cd /etc/postfix && sudo nano main.cf```
+
+Pour configurer le domaine, il faut modifier le premier paragraphe situé sous l'indication de la version de Postfix. Dans notre cas, nous définirons notre domaine par cdg.sio.pub et changerons *myorigin* par *$mydomain* (changer la définition de myorigin permet si un compte local envoie un mail d'avoir comme domain cdg.sio.pub et non mail.cdg.sio.pub)
+
+<img src="../projet bts/captures mail/domain postfix.png" widht="80%">
+
+Ensuite, on peut alors définir ses destinations qu'il considère comme lui-même. Cette option se démarque à l'aide de la ligne *mydestination*. On indiquera alors quels hosts lui correspondent sous différentes manières (loopback, loopback.domain.name, FQDN et sous la fonction $myhostname)
+
+```mydestination = $myhostname, mail.cdg.sio.pub, localhost, localhost.cdg.sio.pub```
+
+Enfin, on peut retrouver l'hostname dans les dernières ligne du fichier. On vérifie alors qu'il correspond à celui définit lors de l'installation qui doit être le même rensaigné dans les entrées DNS.
+
+<img src="../projet bts/captures mail/postfix hostname.png">
+
+Une fois modifié on peut alors auvegarder le fichier et redémarrer Postifx à l'aide de cette commande : 
+
+```sudo systemctl restart postfix.service && sudo systemctl status postfix.service```
+
+### Dovecot
+
+#### Installation
+Pour l'intallation de Dovecot, ils prévoient des paquets dans les dépôts Debian. À l'aide de leur documentation, on peut alors vérifier lesquels sont adaptés pour notre usage. Nous installerons alors *dovecot-core* (système usuel), *dovecot-po3d* (le daemon POP3), *dovecot-imapd* (le daemon IMAP), *dovecot-lmtpd* (le daemon LMTP (Light Mail Transfert Protocol) qui permet d'échanger des mail comme le SMTP mais en local (liaison avec Postfix)) et *dovecot-ldap* (gère l'intégration LDAP). 
+
+```sudo apt install dovecot-core dovecot-ldap dovecot-pop3d dovecot-imapd dovecot-lmtp -y```
+
+*SI VOTRE DEBIAN 13 NE TROUVE PAS LES PAQUETS CORRESPONDANTS A DOVECOT VOUS POUVEZ LES AJOUTER AUX DÉPÔTS SOURCES EN SUIVANT CES INSTRCUTIONS [Ajout des dépôts Dovecot](https://repo.dovecot.org/)*
+
+#### Configuration
+Tous les fichiers de configuration liés à Dovecot se situe dans ce répertoire : */etc/dovecot*
+Dans ce répertoire, nous trouverons alors le fichier **dovecot.conf**. Par défaut, toute la configuration est commenté à l'aide de #, il nous faut alors décommenter la ligne correspondante à ```protocols = imap pop3 lmtp```.
+
+<img src="../projet bts/captures mail/proto dovecot.png" wdith="80%">
+
